@@ -1,0 +1,29 @@
+# Data science workshop packages, pinned so every laptop gets the same numbers.
+# Needs Python 3.12, 3.13 or 3.14 (NumPy 2.5 dropped 3.11).
+# Checked on 2026-10-20: macOS wheels exist for all of these, Apple Silicon and Intel.
+
+# Data
+numpy==2.5.4
+pandas==3.0.6
+scipy==1.18.1
+pyarrow==26.0.0        # Parquet files; faster text columns in pandas
+openpyxl==3.1.5        # read and write Excel
+duckdb==1.5.6          # SQL on CSV files and DataFrames
+PyYAML==6.0.3
+
+# Models and statistics
+scikit-learn==1.9.1
+xgboost==3.4.1
+statsmodels==0.15.0    # regression tables with p-values and confidence intervals
+joblib==1.6.0
+
+# Charts
+matplotlib==3.11.2
+seaborn==0.13.2
+plotly==7.1.0          # interactive charts
+
+# Notebooks
+jupyterlab==4.6.4
+ipykernel==7.4.0
+ipywidgets==8.1.9      # sliders and progress bars in notebooks
+tqdm==4.70.1           # progress bars
