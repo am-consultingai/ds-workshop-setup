@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Sets up the data science workshop environment on a Mac, then checks it.
+# Sets up the data science workshop environment on a Mac, or on Windows
+# through WSL (Ubuntu), then checks it.
 #
 #   ./setup.sh            create or update .venv here, install, check
 #   ./setup.sh --fresh    delete .venv first and start clean
@@ -23,7 +24,7 @@ FRESH=0
 for arg in "$@"; do
   case "$arg" in
     --fresh) FRESH=1 ;;
-    -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "Unknown option: $arg (try --help)"; exit 2 ;;
   esac
 done
@@ -61,6 +62,10 @@ fail() {  # fail "message"  — stops the setup at the current step
 
 python_version() {  # prints e.g. 3.13, or nothing if $1 isn't a working Python
   "$1" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null
+}
+
+is_wsl() {  # true when running inside WSL on Windows
+  grep -qi microsoft /proc/version 2>/dev/null
 }
 
 version_ok() {  # 3.12 to 3.14
@@ -121,18 +126,31 @@ main() {
   if [ "$(uname -s)" = "Darwin" ]; then
     echo "    macOS:        $(sw_vers -productVersion)"
     echo "    Homebrew:     $(command -v brew || echo 'not installed')"
+  elif is_wsl; then
+    echo "    Windows:      WSL ($( (. /etc/os-release && echo "$PRETTY_NAME") 2>/dev/null || echo 'Linux'))"
+    case "$HERE" in
+      /mnt/*) echo "    WARNING: this folder is on the Windows drive ($HERE)."
+              echo "    Installing there is very slow. Run the setup from your Linux home folder:"
+              echo "      cd ~ and run the one-line command again." ;;
+    esac
   else
-    echo "    Note: this script is written for macOS; continuing anyway."
+    echo "    Linux:        $( (. /etc/os-release && echo "$PRETTY_NAME") 2>/dev/null || echo 'unknown')"
   fi
   echo "    Disk free:    $(df -h "$HERE" | awk 'NR==2 {print $4}') (needs about 2 GB)"
   run curl -sS -o /dev/null --max-time 15 -w "    PyPI reachable: HTTP %{http_code}\n" https://pypi.org/simple/pip/ \
     || fail "cannot reach pypi.org. Check the internet connection, VPN or proxy." || return 1
 
   step "Find Python 3.12, 3.13 or 3.14"
-  find_python || fail "no suitable Python found.
+  if [ "$(uname -s)" = "Darwin" ]; then
+    find_python || fail "no suitable Python found.
            Install Python 3.13 from https://www.python.org/downloads/macos/
            or with Homebrew: brew install python@3.13
            then run this script again." || return 1
+  else
+    find_python || fail "no suitable Python found.
+           On Ubuntu 24.04 or newer: sudo apt update && sudo apt install -y python3 python3-venv
+           then run this script again." || return 1
+  fi
   echo "    Using: $PY ($("$PY" --version 2>&1))"
   local arch
   arch="$("$PY" -c 'import platform; print(platform.machine())')"
@@ -173,6 +191,20 @@ main() {
     fi
   fi
   if [ ! -x "$VENV/bin/python" ]; then
+    # Ubuntu and Debian ship venv's ensurepip in a separate package.
+    if ! "$PY" -c 'import ensurepip, venv' 2>/dev/null; then
+      local pv
+      pv="$(python_version "$PY")"
+      if command -v apt-get >/dev/null 2>&1; then
+        fail "$PY cannot create virtual environments yet.
+           Ubuntu keeps that part of Python in a separate package. Install it with:
+             sudo apt update && sudo apt install -y python$pv-venv
+           sudo asks for your Linux password (the one you set up for WSL).
+           Then run: ./setup.sh --fresh" || return 1
+      else
+        fail "$PY has no venv/ensurepip module. Install the full Python $pv, then run ./setup.sh --fresh" || return 1
+      fi
+    fi
     run "$PY" -m venv "$VENV" || fail "could not create the virtual environment." || return 1
   fi
   run "$VENV/bin/python" -m pip install --upgrade pip || return 1
