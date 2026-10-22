@@ -1,6 +1,6 @@
 """Checks that the workshop environment is ready.
 
-Run it with the environment's Python:  .venv/bin/python check_env.py
+Run it with the environment's Python:  ~/.venvs/ds-workshop/bin/python check_env.py
 Prints PASS or FAIL for each check and exits with 1 if anything failed.
 Uses only the standard library until each package is tested, so it can
 report a missing package instead of crashing on it.
@@ -82,7 +82,7 @@ def _():
 @check("Running in a virtual env")
 def _():
     if sys.prefix == sys.base_prefix:
-        raise RuntimeError("not inside a virtual environment; run with .venv/bin/python")
+        raise RuntimeError("not inside a virtual environment; run with ~/.venvs/ds-workshop/bin/python")
     return sys.prefix
 
 
@@ -275,7 +275,7 @@ def _():
     from jupyter_client.kernelspec import KernelSpecManager
     specs = KernelSpecManager().find_kernel_specs()
     if KERNEL_NAME not in specs:
-        raise RuntimeError(f"not found; run: .venv/bin/python -m ipykernel install --user --name {KERNEL_NAME}")
+        raise RuntimeError(f"not found; run: ~/.venvs/ds-workshop/bin/python -m ipykernel install --user --name {KERNEL_NAME}")
     return specs[KERNEL_NAME]
 
 

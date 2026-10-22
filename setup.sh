@@ -2,18 +2,20 @@
 # Sets up the data science workshop environment on a Mac, or on Windows
 # through WSL (Ubuntu), then checks it.
 #
-#   ./setup.sh            create or update .venv here, install, check
-#   ./setup.sh --fresh    delete .venv first and start clean
+#   ./setup.sh            create or update ~/.venvs/ds-workshop, install, check
+#   ./setup.sh --fresh    delete that environment first and start clean
 #   PYTHON=/path/to/python3.13 ./setup.sh    use a specific Python
 #
 # No Anaconda. Uses a standard Python virtual environment (venv) and pip.
+# The environment lives in ~/.venvs/ds-workshop, outside this folder, so the
+# workshop project can be cloned later and use it through ./link-env.sh.
 # Everything is printed and also saved to logs/setup_<date>_<time>.log.
 # Written for the bash 3.2 that ships with macOS.
 
 set -u -o pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-VENV="$HERE/.venv"
+VENV="$HOME/.venvs/ds-workshop"
 LOG_DIR="$HERE/logs"
 LOG="$LOG_DIR/setup_$(date +%Y%m%d_%H%M%S).log"
 FAILED_STEP_FILE="$LOG_DIR/.failed_step"
@@ -24,7 +26,7 @@ FRESH=0
 for arg in "$@"; do
   case "$arg" in
     --fresh) FRESH=1 ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "Unknown option: $arg (try --help)"; exit 2 ;;
   esac
 done
@@ -66,6 +68,27 @@ python_version() {  # prints e.g. 3.13, or nothing if $1 isn't a working Python
 
 is_wsl() {  # true when running inside WSL on Windows
   grep -qi microsoft /proc/version 2>/dev/null
+}
+
+check_tools() {  # warns, never fails: the workshop needs these later, not the setup
+  # On a Mac without Apple's Command Line Tools, /usr/bin/git is a stub that
+  # opens an install dialog. Detect that without running it.
+  if [ "$(uname -s)" = "Darwin" ] && [ "$(command -v git)" = "/usr/bin/git" ] \
+     && ! xcode-select -p >/dev/null 2>&1; then
+    echo "    Git:          WARNING: needs Apple's Command Line Tools. Install them with: xcode-select --install"
+  elif command -v git >/dev/null 2>&1; then
+    echo "    Git:          $(git --version 2>&1)"
+  else
+    echo "    Git:          WARNING: not installed. You need it to clone the workshop project."
+  fi
+  local claude_bin
+  claude_bin="$(command -v claude 2>/dev/null || true)"
+  [ -z "$claude_bin" ] && [ -x "$HOME/.local/bin/claude" ] && claude_bin="$HOME/.local/bin/claude"
+  if [ -n "$claude_bin" ]; then
+    echo "    Claude Code:  $("$claude_bin" --version 2>/dev/null | head -1)"
+  else
+    echo "    Claude Code:  WARNING: not installed. Get it from https://claude.com/product/claude-code"
+  fi
 }
 
 version_ok() {  # 3.12 to 3.14
@@ -136,7 +159,8 @@ main() {
   else
     echo "    Linux:        $( (. /etc/os-release && echo "$PRETTY_NAME") 2>/dev/null || echo 'unknown')"
   fi
-  echo "    Disk free:    $(df -h "$HERE" | awk 'NR==2 {print $4}') (needs about 2 GB)"
+  echo "    Disk free:    $(df -h "$HOME" | awk 'NR==2 {print $4}') (needs about 2 GB)"
+  check_tools
   run curl -sS -o /dev/null --max-time 15 -w "    PyPI reachable: HTTP %{http_code}\n" https://pypi.org/simple/pip/ \
     || fail "cannot reach pypi.org. Check the internet connection, VPN or proxy." || return 1
 
@@ -175,6 +199,11 @@ main() {
   fi
 
   step "Create the virtual environment"
+  echo "    Location: $VENV"
+  if [ -x "$HERE/.venv/bin/python" ]; then
+    echo "    Note: $HERE/.venv is from an older version of this setup and is no longer used."
+    echo "    To free about 1.5 GB: rm -rf \"$HERE/.venv\""
+  fi
   if [ "$FRESH" = 1 ] && [ -d "$VENV" ]; then
     echo "    --fresh: deleting the old environment"
     run rm -rf "$VENV" || return 1
@@ -184,10 +213,10 @@ main() {
     have="$(python_version "$VENV/bin/python")"
     want="$(python_version "$PY")"
     if [ "$have" != "$want" ]; then
-      echo "    Existing .venv uses Python $have, not $want. Recreating it."
+      echo "    The environment uses Python $have, not $want. Recreating it."
       run rm -rf "$VENV" || return 1
     else
-      echo "    Reusing existing .venv (Python $have). Use --fresh to start clean."
+      echo "    Reusing the existing environment (Python $have). Use --fresh to start clean."
     fi
   fi
   if [ ! -x "$VENV/bin/python" ]; then
@@ -205,6 +234,7 @@ main() {
         fail "$PY has no venv/ensurepip module. Install the full Python $pv, then run ./setup.sh --fresh" || return 1
       fi
     fi
+    mkdir -p "$(dirname "$VENV")"
     run "$PY" -m venv "$VENV" || fail "could not create the virtual environment." || return 1
   fi
   run "$VENV/bin/python" -m pip install --upgrade pip || return 1
@@ -235,10 +265,12 @@ STATUS=${PIPESTATUS[0]}
   if [ "$STATUS" -eq 0 ]; then
     echo "  SUCCESS!!  The workshop environment is ready."
     echo
-    echo "  Start it:   source \"$VENV/bin/activate\""
-    echo "  Notebooks:  jupyter lab   (choose the kernel 'Python (ds-workshop)')"
-    echo "  Re-check:   \"$VENV/bin/python\" \"$HERE/check_env.py\""
-    echo "  Log:        $LOG"
+    echo "  Installed in:  $VENV"
+    echo "  Re-check:      \"$VENV/bin/python\" \"$HERE/check_env.py\""
+    echo "  Log:           $LOG"
+    echo
+    echo "  Nothing else to install. When the workshop project is ready, you will"
+    echo "  clone it, run ./link-env.sh inside it once, and start Claude there."
   else
     echo "  FAILED at step: $(cat "$FAILED_STEP_FILE" 2>/dev/null || echo 'unknown')"
     echo

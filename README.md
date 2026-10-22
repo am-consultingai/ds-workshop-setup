@@ -16,6 +16,24 @@ git clone https://github.com/am-consultingai/ds-workshop-setup.git && cd ds-work
 
 It ends with **SUCCESS!!** or **FAILED at step: …**. Either way, the full log is in `logs/`.
 
+## Where it installs
+
+Everything goes into one environment at `~/.venvs/ds-workshop`, not into your system Python. It takes about 1.5 GB. It also registers a Jupyter kernel called **Python (ds-workshop)**.
+
+Running the command again updates the same environment. It does not make a second copy.
+
+## When the workshop project is ready
+
+You will clone the project, link it to this environment once, and start Claude there:
+
+```bash
+git clone <project URL> && cd <project folder>
+./link-env.sh
+claude
+```
+
+`link-env.sh` makes `.venv` in the project point to `~/.venvs/ds-workshop`, so nothing is installed twice.
+
 ## What you need first
 
 - **Python 3.12, 3.13 or 3.14.** Not Apple's built-in `/usr/bin/python3`, which is 3.9. Get it from [python.org](https://www.python.org/downloads/macos/) or with `brew install python@3.13`.
@@ -38,14 +56,15 @@ It ends with **SUCCESS!!** or **FAILED at step: …**. Either way, the full log 
 | File | What it does |
 |---|---|
 | `requirements.txt` | The packages, with exact versions |
-| `setup.sh` | Finds Python, creates `.venv`, installs the packages, registers the Jupyter kernel, runs the check |
+| `setup.sh` | Finds Python, creates `~/.venvs/ds-workshop`, installs the packages, registers the Jupyter kernel, runs the check |
 | `check_env.py` | Checks every package's version, makes each one do real work, and confirms results are the same on every run |
 | `logs/` | One log file per run |
+| `template/link-env.sh` | Goes into the workshop project: links its `.venv` to this environment |
 
 ## Options
 
 ```bash
-./setup.sh --fresh                       # delete .venv and start clean
+./setup.sh --fresh                       # delete the environment and start clean
 PYTHON=/opt/homebrew/bin/python3.13 ./setup.sh   # use a specific Python
-.venv/bin/python check_env.py            # re-run only the check
+~/.venvs/ds-workshop/bin/python check_env.py     # re-run only the check
 ```
