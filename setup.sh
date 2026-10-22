@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
-# Sets up the data science workshop environment on a Mac, or on Windows
-# through WSL (Ubuntu), then checks it.
+# Sets up the data science workshop on a Mac, or on Windows through WSL
+# (Ubuntu): installs Claude Code, Python if needed, and the Python libraries,
+# then checks everything.
 #
 #   ./setup.sh            create or update ~/.venvs/ds-workshop, install, check
 #   ./setup.sh --fresh    delete that environment first and start clean
 #   PYTHON=/path/to/python3.13 ./setup.sh    use a specific Python
 #
 # No Anaconda. Uses a standard Python virtual environment (venv) and pip.
+# Steps that need an administrator password (sudo) are never run here: the
+# script stops and prints the exact command to run, then you run it again.
 # The environment lives in ~/.venvs/ds-workshop, outside this folder, so the
-# workshop project can be cloned later and use it through ./link-env.sh.
+# workshop project can be downloaded later and use it through ./link-env.sh.
 # Everything is printed and also saved to logs/setup_<date>_<time>.log.
 # Written for the bash 3.2 that ships with macOS.
 
@@ -20,13 +23,13 @@ LOG_DIR="$HERE/logs"
 LOG="$LOG_DIR/setup_$(date +%Y%m%d_%H%M%S).log"
 FAILED_STEP_FILE="$LOG_DIR/.failed_step"
 KERNEL_NAME="ds-workshop"
-TOTAL_STEPS=7
+TOTAL_STEPS=8
 
 FRESH=0
 for arg in "$@"; do
   case "$arg" in
     --fresh) FRESH=1 ;;
-    -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
     *) echo "Unknown option: $arg (try --help)"; exit 2 ;;
   esac
 done
@@ -70,25 +73,77 @@ is_wsl() {  # true when running inside WSL on Windows
   grep -qi microsoft /proc/version 2>/dev/null
 }
 
-check_tools() {  # warns, never fails: the workshop needs these later, not the setup
-  # On a Mac without Apple's Command Line Tools, /usr/bin/git is a stub that
-  # opens an install dialog. Detect that without running it.
-  if [ "$(uname -s)" = "Darwin" ] && [ "$(command -v git)" = "/usr/bin/git" ] \
-     && ! xcode-select -p >/dev/null 2>&1; then
-    echo "    Git:          WARNING: needs Apple's Command Line Tools. Install them with: xcode-select --install"
-  elif command -v git >/dev/null 2>&1; then
-    echo "    Git:          $(git --version 2>&1)"
-  else
-    echo "    Git:          WARNING: not installed. You need it to clone the workshop project."
+shell_rc() {  # the file your terminal reads at start, for the PATH line
+  case "$(basename "${SHELL:-}")" in
+    zsh)  echo "$HOME/.zshrc" ;;
+    bash) if [ "$(uname -s)" = "Darwin" ]; then echo "$HOME/.bash_profile"; else echo "$HOME/.bashrc"; fi ;;
+    *)    echo "" ;;
+  esac
+}
+
+install_claude() {
+  local bin="$HOME/.local/bin/claude"
+  if command -v claude >/dev/null 2>&1; then
+    echo "    found $(command -v claude) ($(claude --version 2>/dev/null | head -1))"
+    return 0
   fi
-  local claude_bin
-  claude_bin="$(command -v claude 2>/dev/null || true)"
-  [ -z "$claude_bin" ] && [ -x "$HOME/.local/bin/claude" ] && claude_bin="$HOME/.local/bin/claude"
-  if [ -n "$claude_bin" ]; then
-    echo "    Claude Code:  $("$claude_bin" --version 2>/dev/null | head -1)"
-  else
-    echo "    Claude Code:  WARNING: not installed. Get it from https://claude.com/product/claude-code"
+  if [ ! -x "$bin" ]; then
+    echo "    Not installed. Installing it with Anthropic's installer."
+    run bash -c "curl -fsSL https://claude.ai/install.sh | bash" \
+      || fail "the Claude Code installer failed. See the messages above." || return 1
   fi
+  [ -x "$bin" ] || fail "the installer finished but $bin is missing." || return 1
+  echo "    Installed: $bin ($("$bin" --version 2>/dev/null | head -1))"
+  # The installer does not add ~/.local/bin to PATH. Add it once, so `claude`
+  # starts from any folder in every new terminal window.
+  local rc line='export PATH="$HOME/.local/bin:$PATH"'
+  rc="$(shell_rc)"
+  if [ -z "$rc" ]; then
+    echo "    WARNING: unknown shell ${SHELL:-}. Add $HOME/.local/bin to your PATH yourself."
+  elif grep -qs '\.local/bin' "$rc"; then
+    echo "    PATH: $rc already includes ~/.local/bin"
+  else
+    printf '\n# Added by the data science workshop setup: lets you run claude from any folder\n%s\n' "$line" >> "$rc" \
+      || fail "could not write to $rc. Add this line to it yourself: $line" || return 1
+    echo "    PATH: added ~/.local/bin to $rc"
+  fi
+}
+
+find_brew() {  # prints the brew path; it may not be on PATH right after installing
+  local b
+  for b in "$(command -v brew 2>/dev/null)" /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    [ -n "$b" ] && [ -x "$b" ] && { echo "$b"; return 0; }
+  done
+  return 1
+}
+
+need_homebrew() {  # stops the setup with Homebrew's official install command
+  fail "this Mac needs Homebrew, which installs Python and the library XGBoost needs.
+           Installing Homebrew needs your Mac password, so this script can't do it for you.
+           Run this command, enter your Mac password when asked, and press Return to confirm:
+
+             /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"
+
+           It can take 5 to 15 minutes. Then paste the setup command again." || return 1
+}
+
+brew_on_path() {  # adds Homebrew's standard line to ~/.zprofile once, so brew works in new terminals
+  local brew="$1" rc="$HOME/.zprofile"
+  [ "$(basename "${SHELL:-}")" = "bash" ] && rc="$HOME/.bash_profile"
+  if ! grep -qs 'brew shellenv' "$rc"; then
+    printf '\n# Added by the data science workshop setup: Homebrew\neval "$(%s shellenv)"\n' "$brew" >> "$rc" \
+      && echo "    PATH: added Homebrew to $rc"
+  fi
+}
+
+need_sudo_linux() {  # stops the setup with the apt command for Python and venv
+  local pkgs="$1"
+  fail "Python needs to be installed with your Linux password, so this script can't do it for you.
+           Run this command, enter your Linux password when asked (the one you set up for WSL):
+
+             sudo apt update && sudo apt install -y $pkgs
+
+           Then paste the setup command again." || return 1
 }
 
 version_ok() {  # 3.12 to 3.14
@@ -148,7 +203,7 @@ main() {
   echo "    System:       $(uname -s) $(uname -r), $(uname -m)"
   if [ "$(uname -s)" = "Darwin" ]; then
     echo "    macOS:        $(sw_vers -productVersion)"
-    echo "    Homebrew:     $(command -v brew || echo 'not installed')"
+    echo "    Homebrew:     $(find_brew || echo 'not installed')"
   elif is_wsl; then
     echo "    Windows:      WSL ($( (. /etc/os-release && echo "$PRETTY_NAME") 2>/dev/null || echo 'Linux'))"
     case "$HERE" in
@@ -160,20 +215,39 @@ main() {
     echo "    Linux:        $( (. /etc/os-release && echo "$PRETTY_NAME") 2>/dev/null || echo 'unknown')"
   fi
   echo "    Disk free:    $(df -h "$HOME" | awk 'NR==2 {print $4}') (needs about 2 GB)"
-  check_tools
   run curl -sS -o /dev/null --max-time 15 -w "    PyPI reachable: HTTP %{http_code}\n" https://pypi.org/simple/pip/ \
     || fail "cannot reach pypi.org. Check the internet connection, VPN or proxy." || return 1
 
-  step "Find Python 3.12, 3.13 or 3.14"
+  step "Claude Code"
+  install_claude || return 1
+
+  step "Python 3.12, 3.13 or 3.14"
+  local brew=""
   if [ "$(uname -s)" = "Darwin" ]; then
-    find_python || fail "no suitable Python found.
-           Install Python 3.13 from https://www.python.org/downloads/macos/
-           or with Homebrew: brew install python@3.13
-           then run this script again." || return 1
-  else
-    find_python || fail "no suitable Python found.
-           On Ubuntu 24.04 or newer: sudo apt update && sudo apt install -y python3 python3-venv
-           then run this script again." || return 1
+    # Homebrew is required on a Mac: XGBoost only finds libomp in Homebrew's folder.
+    brew="$(find_brew)" || { need_homebrew; return 1; }
+    echo "    Homebrew: $brew"
+    brew_on_path "$brew"
+  fi
+  if ! find_python; then
+    echo "    No suitable Python found."
+    if [ -n "$brew" ]; then
+      echo "    Installing Python 3.13 with Homebrew."
+      run "$brew" install python@3.13 || fail "brew install python@3.13 failed. See the messages above." || return 1
+      find_python || fail "Python was installed but can't be found. Open a new terminal and paste the setup command again." || return 1
+    elif command -v apt-get >/dev/null 2>&1; then
+      need_sudo_linux "python3 python3-venv" || return 1
+    else
+      fail "install Python 3.12, 3.13 or 3.14 with your system's package manager, then run this again." || return 1
+    fi
+  fi
+  # Ubuntu and Debian ship venv's ensurepip in a separate package.
+  if ! "$PY" -c 'import ensurepip, venv' 2>/dev/null; then
+    if command -v apt-get >/dev/null 2>&1; then
+      need_sudo_linux "python$(python_version "$PY")-venv" || return 1
+    else
+      fail "$PY has no venv/ensurepip module. Install the full Python, then run this again." || return 1
+    fi
   fi
   echo "    Using: $PY ($("$PY" --version 2>&1))"
   local arch
@@ -188,13 +262,9 @@ main() {
     if [ "$arch" = "arm64" ]; then omp_dir="/opt/homebrew/opt/libomp/lib"; else omp_dir="/usr/local/opt/libomp/lib"; fi
     if [ -f "$omp_dir/libomp.dylib" ]; then
       echo "    found $omp_dir/libomp.dylib"
-    elif command -v brew >/dev/null 2>&1; then
-      echo "    libomp is missing. Installing it with Homebrew."
-      run brew install libomp || fail "brew install libomp failed. See the messages above." || return 1
     else
-      echo "    WARNING: libomp not found at $omp_dir and Homebrew is not installed."
-      echo "    Everything else will install, but XGBoost will not load."
-      echo "    The environment check at the end will show this as a failure."
+      echo "    libomp is missing. Installing it with Homebrew."
+      run "$brew" install libomp || fail "brew install libomp failed. See the messages above." || return 1
     fi
   fi
 
@@ -220,20 +290,6 @@ main() {
     fi
   fi
   if [ ! -x "$VENV/bin/python" ]; then
-    # Ubuntu and Debian ship venv's ensurepip in a separate package.
-    if ! "$PY" -c 'import ensurepip, venv' 2>/dev/null; then
-      local pv
-      pv="$(python_version "$PY")"
-      if command -v apt-get >/dev/null 2>&1; then
-        fail "$PY cannot create virtual environments yet.
-           Ubuntu keeps that part of Python in a separate package. Install it with:
-             sudo apt update && sudo apt install -y python$pv-venv
-           sudo asks for your Linux password (the one you set up for WSL).
-           Then run: ./setup.sh --fresh" || return 1
-      else
-        fail "$PY has no venv/ensurepip module. Install the full Python $pv, then run ./setup.sh --fresh" || return 1
-      fi
-    fi
     mkdir -p "$(dirname "$VENV")"
     run "$PY" -m venv "$VENV" || fail "could not create the virtual environment." || return 1
   fi
@@ -269,8 +325,10 @@ STATUS=${PIPESTATUS[0]}
     echo "  Re-check:      \"$VENV/bin/python\" \"$HERE/check_env.py\""
     echo "  Log:           $LOG"
     echo
+    echo "  Next: open a NEW terminal window and type  claude  to log in."
+    echo
     echo "  Nothing else to install. When the workshop project is ready, you will"
-    echo "  clone it, run ./link-env.sh inside it once, and start Claude there."
+    echo "  download it, run ./link-env.sh inside it once, and start Claude there."
   else
     echo "  FAILED at step: $(cat "$FAILED_STEP_FILE" 2>/dev/null || echo 'unknown')"
     echo
